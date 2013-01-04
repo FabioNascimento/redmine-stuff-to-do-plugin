@@ -1,9 +1,10 @@
 class StuffToDoController < ApplicationController
   unloadable
-
+  
+  include StuffToDoHelper
+  
   before_filter :get_user
   before_filter :get_time_grid, :only => [:index, :time_grid]
-  before_filter :require_admin, :only => :available_issues
   helper :stuff_to_do
   helper :custom_fields
   helper :timelog
@@ -12,9 +13,36 @@ class StuffToDoController < ApplicationController
     @doing_now = StuffToDo.doing_now(@user)
     @recommended = StuffToDo.recommended(@user)
     @available = StuffToDo.available(@user, default_filters )
-    
-    @users = User.active
+
+    @users = StuffToDoReportee.reportees_for(User.current)
+    @users << User.current unless @users.include?(User.current)
     @filters = filters_for_view
+    
+    respond_to do |format|
+        format.html { render :template => 'stuff_to_do/index', :layout => !request.xhr? }
+        format.csv  { send_data(stuff_to_do_to_csv(@doing_now, @recommended, @available, @user, params), :type => 'text/csv; header=present', :filename => 'export.csv') }
+    end
+  end
+  
+  def delete
+     if !params[:issue_id].nil? && !params[:user_id].nil?
+       StuffToDo.remove(params[:user_id],  params[:issue_id] )
+     end
+     
+    respond_to do |format|
+      format.html { redirect_to_referer_or { render :text => ('Deleting Issue from stuff-to-do.'), :layout => true} }
+      format.js { render :partial => 'stuff-to-do', :layout => false}
+    end
+  end
+  
+  def add
+    if !params[:issue_id].nil? && !params[:user_id].nil?
+      StuffToDo.add(params[:user_id], params[:issue_id], params[:to_front] == "true")         
+    end
+    respond_to do |format|
+      format.html { redirect_to_referer_or { render :text => ('Adding issue to stuff-to-do.'), :layout => true} }
+      format.js { render :partial => 'stuff-to-do', :layout => false}
+    end
   end
   
   def reorder
@@ -87,7 +115,7 @@ class StuffToDoController < ApplicationController
     render_403 unless User.current.logged?
     
     if params[:user_id] && params[:user_id] != User.current.id.to_s
-      if User.current.admin?
+      if User.current.allowed_to?(:view_others_stuff_to_do, @project, :global => true)
         @user = User.find(params[:user_id])
       else
         render_403
@@ -98,7 +126,7 @@ class StuffToDoController < ApplicationController
   end
   
   def filters_for_view
-    StuffToDoFilter.new
+    StuffToDoFilter.new(:user => @user)
   end
 
   def get_filters
@@ -125,8 +153,8 @@ class StuffToDoController < ApplicationController
     elsif StuffToDo.using_projects_as_items?
       return Project.new
     else
-      # Edge case
-      return { }
+    # Edge case
+    return { }
     end
   end
 
