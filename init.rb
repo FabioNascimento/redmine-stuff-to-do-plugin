@@ -31,15 +31,20 @@ Redmine::Plugin.register :stuff_to_do_plugin do
   settings(:partial => 'settings/stuff_to_do_settings',
            :default => {
              'use_as_stuff_to_do' => '0',
-             'threshold' => '1',
+             'threshold' => '-1',
              'email_to' => 'example1@example.com,example2@example.com',
-             'use_time_grid' => '0'
+             'use_time_grid' => '0',
+             'use_day_grid' => '0',
+             'statuses_for_stuff_to_do' => ['all']
            })
 
   project_module :stuff_to_do do
     permission :view_stuff_to_do, {:stuff_to_do => :index}
     permission :view_others_stuff_to_do, {:stuff_to_do => :index}
+    permission :view_all_users_stuff_to_do, {:stuff_to_do => :index}
     permission :manage_stuff_to_do_reportees, {:stuff_to_do => :index}
+    permission :view_all_reportee_issues, {:stuff_to_do => :index }
+    permission :view_all_reportee_stuff_to_do, {:stuff_to_do => :index }
   end
 
   menu(:top_menu, :stuff_to_do, {:controller => "stuff_to_do", :action => 'index'}, :caption => :stuff_to_do_title, :if => Proc.new{

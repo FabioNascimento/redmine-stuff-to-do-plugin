@@ -4,7 +4,6 @@
 if Rails::VERSION::MAJOR >= 3
   RedmineApp::Application.routes.draw do
     match 'stuff_to_do', :to => 'stuff_to_do#index', :via => 'get'
-    match 'stuff_to_do', :to => 'stuff_to_do#time_grid', :via => 'time_grid'
     match 'stuff_to_do/:action.:format', :to => 'stuff_to_do', :via => [:get, :post]
   end
   match '/stuff_to_do/add', :to => 'stuff_to_do#add', :via =>  [:get, :post]
@@ -13,6 +12,9 @@ if Rails::VERSION::MAJOR >= 3
   match '/stuff_to_do/reportees_admin', :to=> 'stuff_to_do_reportee#admin', :via => 'get'
   match '/stuff_to_do/reportees/add', :to=> 'stuff_to_do_reportee#add', :via => [:get, :post]
   match '/stuff_to_do/reportees/delete', :to=> 'stuff_to_do_reportee#delete', :via => [:get, :post]
+  match '/stuff_to_do/clear', :to => 'stuff_to_do#clear', :via => [:get, :post]
+  match '/stuff_to_do/day_grid', :to => 'stuff_to_do#day_grid', :via => [:get]
+  match '/stuff_to_do/save_days', :to => 'stuff_to_do#save_days', :via => [:post]
 else
   ActionController::Routing::Routes.draw do |map|
     map.with_options :controller => 'stuff_to_do' do |stuff_routes|

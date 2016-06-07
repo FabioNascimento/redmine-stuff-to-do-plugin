@@ -17,19 +17,15 @@ class StuffToDo < ActiveRecord::Base
   
   if Rails::VERSION::MAJOR >= 3
     scope :doing_now, lambda { |user|
-      {
-        :conditions => { :user_id => user.id },
-        :order => 'position ASC',
-        :limit => 5
-      }
+      where( :user_id => user.id ).
+        order('position ASC').
+        limit(5)
     }
   else
     named_scope :doing_now, lambda { |user|
-      {
-        :conditions => { :user_id => user.id },
-        :order => 'position ASC',
-        :limit => 5
-      }
+      where( :user_id => user.id ).
+        order('position ASC').
+        limit(5)
     }
   end
   
@@ -42,21 +38,17 @@ class StuffToDo < ActiveRecord::Base
   #
   if Rails::VERSION::MAJOR >= 3
     scope :recommended, lambda { |user|
-      {
-        :conditions => { :user_id => user.id },
-        :order => 'position ASC',
-        :limit => self.count,
-        :offset => 5
-      }
+      where( :user_id => user.id ).
+        order('position ASC').
+        limit(self.count).
+        offset(5)
     }
   else
     named_scope :recommended, lambda { |user|
-      {
-        :conditions => { :user_id => user.id },
-        :order => 'position ASC',
-        :limit => self.count,
-        :offset => 5
-      }
+      where( :user_id => user.id ).
+        order('position ASC').
+        limit(self.count).
+        offset(5)
     }
   end
   
@@ -68,26 +60,31 @@ class StuffToDo < ActiveRecord::Base
   # * IssueStatus - issues with this status
   # * IssuePriority - issues with this priority
   #
-  def self.available(user, filter=nil)
+  def self.available(user, project, filter=nil)
     return [] if filter.blank?
-
+      
     if filter.is_a?(Project)
-      potential_stuff_to_do = active_and_visible_projects.sort
+      potential_stuff_to_do = active_and_visible_projects(user).sort
     else
-      potential_stuff_to_do = Issue.find(:all,
-                                         :include => [:status, :priority, :project],
-                                         :conditions => conditions_for_available(user, filter),
-                                         :order => "#{Issue.table_name}.created_on DESC")
+      if User.current.allowed_to?(:view_all_reportee_issues, nil, { :global => true }) or (User == User.current)
+        visible_issues =  Issue
+      else
+        visible_issues =  Issue.visible       
+      end
+      potential_stuff_to_do = visible_issues.
+                                         joins(:status, :priority, :project).
+                                         where(conditions_for_available(user, filter, project)).
+                                         order("#{Issue.table_name}.created_on DESC")
     end
 
-    stuff_to_do = StuffToDo.find(:all, :conditions => { :user_id => user.id }).collect(&:stuff)
+    stuff_to_do = StuffToDo.where( :user_id => user.id ).collect(&:stuff)
     
     return potential_stuff_to_do - stuff_to_do
   end
   
   def self.assigned(user)
 
-    return StuffToDo.find(:all, :conditions => { :user_id => user.id }).collect(&:stuff)
+    return StuffToDo.where( :user_id => user.id ).collect(&:stuff)
   end
 
   def self.using_projects_as_items?
@@ -109,7 +106,7 @@ class StuffToDo < ActiveRecord::Base
 
     # Deliver an email for each user who is below the threshold
     user_ids.uniq.each do |user_id|
-      count = self.count(:conditions => { :user_id => user_id})
+      count = self.where( :user_id => user_id ).count
       threshold = Setting.plugin_stuff_to_do_plugin['threshold']
 
       if threshold && threshold.to_i >= count
@@ -162,6 +159,15 @@ class StuffToDo < ActiveRecord::Base
     reorder_projects(user, project_ids)
   end
 
+  def self.available_status?(issue)
+    return true if Setting.plugin_stuff_to_do_plugin['statuses_for_stuff_to_do'].nil?
+    ( Setting.plugin_stuff_to_do_plugin['statuses_for_stuff_to_do'] & ['all', issue.status_id.to_s] ).size > 0
+  end
+
+  def self.unavailable_status?(issue)
+    !self.available_status?(issue)
+  end
+
   private
 
   def self.reorder_issues(user, issue_ids)
@@ -173,7 +179,7 @@ class StuffToDo < ActiveRecord::Base
   end
 
   def self.reorder_items(type, user, ids)
-    list = self.find_all_by_user_id_and_stuff_type(user.id, type)
+    list = self.where(:user_id => user.id, :stuff_type => type)
     stuff_to_dos_found = list.collect { |std| std.stuff_id.to_i }
 
     remove_missing_records(user, stuff_to_dos_found, ids.values)
@@ -205,18 +211,18 @@ class StuffToDo < ActiveRecord::Base
   def self.remove_missing_records(user, ids_found_in_database, ids_to_use)
     removed = ids_found_in_database - ids_to_use
     removed.each do |id|
-      removed_stuff_to_do = self.find_by_user_id_and_stuff_id(user.id, id)
+      removed_stuff_to_do = self.find_by(:user_id => user.id, :stuff_id => id)
       removed_stuff_to_do.destroy
     end
   end
   
   def self.remove(user_id, id)
-    removed_stuff_to_do = self.find_by_user_id_and_stuff_id(user_id, id)
+    removed_stuff_to_do = self.find_by(:user_id => user_id, :stuff_id => id)
     removed_stuff_to_do.destroy
   end
   
   def self.add(user_id, id, to_front)
-    if (find_by_user_id_and_stuff_id(user_id, id).nil?) #make sure it's not already there
+    if (where(:user_id => user_id, :stuff_id => id).nil?) #make sure it's not already there
       stuff_to_do = self.new
               stuff_to_do.stuff_id = id
               stuff_to_do.stuff_type = 'Issue'
@@ -229,29 +235,39 @@ class StuffToDo < ActiveRecord::Base
     end
   end
 
-  # Redmine 0.8.x compatibility method.
-  def self.active_and_visible_projects
-    if ::Project.respond_to?(:active) && ::Project.respond_to?(:visible)
-      return ::Project.active.visible
-    else
-      return ::Project.find(:all, :conditions => Project.visible_by)
+  def self.active_and_visible_projects(user=User.current)
+    projects = Project.active.where(Project.visible_condition(user))
+    if !User.current.allowed_to_globally?(:view_all_reportee_issues, {}) and (user != User.current)
+      projects = projects.where(Project.visible_condition(User.current))
     end
+    projects
   end
 
   def self.use_setting
     USE.index(Setting.plugin_stuff_to_do_plugin['use_as_stuff_to_do'])
   end
 
-  def self.conditions_for_available(user, filter_by)
+  def self.conditions_for_available(user, filter_by, project)
     scope = self
     conditions = "#{IssueStatus.table_name}.is_closed = false"
+    trackers = Setting.plugin_stuff_to_do_plugin['statuses_for_stuff_to_do']
+    if not trackers.nil? and not trackers.include? 'all'
+      conditions << " AND (#{IssueStatus.table_name}.id IN (#{Setting.plugin_stuff_to_do_plugin['statuses_for_stuff_to_do'].join(',')}))"
+    end
     conditions << " AND (" << "#{Project.table_name}.status = %d" % [Project::STATUS_ACTIVE] << ")"
-    conditions << " AND (" << "assigned_to_id = %d" % [user.id] << ")"
+    conditions << " AND ((" << "assigned_to_id = %d" % [user.id] << ")"
+    if(user.is_a?(User))
+      user.group_ids.each do |group_id|
+        conditions << " OR (" << "assigned_to_id = %d" % [group_id] << ")"
+      end
+    end
+    conditions << ")"
     case 
     when filter_by.is_a?(IssueStatus), filter_by.is_a?(Enumeration)
       table_name = filter_by.class.table_name
       conditions << " AND (" << "#{table_name}.id = (%d)" % [filter_by.id] << ")"
     end
+    conditions << ( " AND (" << "#{Issue.table_name}.project_id = %d" % [project.id] << ")" ) unless project.nil?
     conditions
   end
 end
